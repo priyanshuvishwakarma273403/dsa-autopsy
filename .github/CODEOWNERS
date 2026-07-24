@@ -1,0 +1,7 @@
+# Global code ownership
+*       @dsa-collective/maintainers
+
+# Specialized directory reviews
+/src/dsa_autopsy/interfaces/    @dsa-collective/architecture
+/src/dsa_autopsy/models/        @dsa-collective/domain-leads
+/.github/workflows/             @dsa-collective/infra
