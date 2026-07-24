@@ -1,8 +1,4 @@
-"""DSA Autopsy package.
-
-An AI-powered algorithm debugging engine designed to analyze solution failures,
-invariant violations, and edge cases.
-"""
+"""DSA Autopsy package."""
 
 from dsa_autopsy.models.domain import (
     AutopsyReport,
@@ -16,7 +12,6 @@ from dsa_autopsy.models.domain import (
 from dsa_autopsy.services.orchestrator import AutopsyOrchestrator
 
 __version__ = "0.1.0"
-__author__ = "DSA Collective"
 
 __all__ = [
     "AutopsyOrchestrator",

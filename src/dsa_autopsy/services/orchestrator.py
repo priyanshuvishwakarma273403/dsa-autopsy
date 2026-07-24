@@ -1,5 +1,6 @@
 """Service layer orchestrating the algorithm debugging (autopsy) workflow."""
 
+import logging
 import uuid
 
 from dsa_autopsy.interfaces.analyzer import BaseAnalyzer
@@ -13,9 +14,8 @@ from dsa_autopsy.models.domain import (
     SourceCode,
     Violation,
 )
-from dsa_autopsy.telemetry.logging import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class AutopsyOrchestrator:
@@ -29,9 +29,6 @@ class AutopsyOrchestrator:
         explainer: BaseExplainer,
     ) -> None:
         """Initialize the orchestrator with its required engine dependencies.
-
-        This design supports complete Dependency Injection, decoupling the core
-        workflow from concrete implementations.
 
         Args:
             parser: BaseParser instance to understand code structure.
@@ -60,21 +57,17 @@ class AutopsyOrchestrator:
             and the AI root-cause explanation.
         """
         report_id = str(uuid.uuid4())
-        logger.info(
-            "Starting autopsy process",
-            extra={"report_id": report_id, "test_cases_count": len(test_cases)},
-        )
+        logger.info(f"Starting autopsy process (ID: {report_id}) with {len(test_cases)} test cases")
 
         # 1. Parse code structure
         try:
-            logger.debug("Parsing source code structure", extra={"report_id": report_id})
+            logger.debug(f"Parsing source code structure for report {report_id}")
             ast_metadata = self._parser.parse(code)
             logger.debug(
-                "Parsed code structure successfully",
-                extra={"report_id": report_id, "functions": list(ast_metadata.keys())},
+                f"Parsed code structure successfully. Functions: {list(ast_metadata.keys())}"
             )
         except Exception:
-            logger.exception("Failed during parse step", extra={"report_id": report_id})
+            logger.exception(f"Failed during parse step for report {report_id}")
             raise
 
         # 2. Execute test cases
@@ -82,10 +75,7 @@ class AutopsyOrchestrator:
         failed_test_cases: list[SolutionTestCase] = []
 
         for test_case in test_cases:
-            logger.info(
-                "Executing test case",
-                extra={"report_id": report_id, "test_case_id": test_case.id},
-            )
+            logger.info(f"Executing test case {test_case.id} for report {report_id}")
             try:
                 result = self._executor.execute(code, test_case)
                 execution_results.append(result)
@@ -102,13 +92,8 @@ class AutopsyOrchestrator:
 
                 if is_failed:
                     logger.warning(
-                        "Test case failed",
-                        extra={
-                            "report_id": report_id,
-                            "test_case_id": test_case.id,
-                            "expected": test_case.expected_output,
-                            "actual": actual_output,
-                        },
+                        f"Test case {test_case.id} failed. Expected: "
+                        f"{test_case.expected_output}, Got: {actual_output}"
                     )
                     # Create an updated SolutionTestCase marking failure
                     updated_case = SolutionTestCase(
@@ -120,40 +105,24 @@ class AutopsyOrchestrator:
                     )
                     failed_test_cases.append(updated_case)
                 else:
-                    logger.debug(
-                        "Test case passed",
-                        extra={"report_id": report_id, "test_case_id": test_case.id},
-                    )
+                    logger.debug(f"Test case {test_case.id} passed")
 
             except Exception:
-                logger.exception(
-                    "Error executing test case",
-                    extra={"report_id": report_id, "test_case_id": test_case.id},
-                )
+                logger.exception(f"Error executing test case {test_case.id} for report {report_id}")
                 raise
 
         # 3. Analyze trace violations
         violations: list[Violation] = []
         if failed_test_cases:
-            logger.info(
-                "Running trace analysis on failed execution runs",
-                extra={"report_id": report_id, "failed_count": len(failed_test_cases)},
-            )
+            logger.info(f"Running trace analysis on {len(failed_test_cases)} failed runs")
             try:
-                # Analyze only execution results that failed or all results to find anomalies
                 violations = self._analyzer.analyze(code, execution_results)
-                logger.info(
-                    "Analysis completed",
-                    extra={"report_id": report_id, "violations_detected": len(violations)},
-                )
+                logger.info(f"Analysis completed. Violations detected: {len(violations)}")
             except Exception:
-                logger.exception("Error during trace analysis", extra={"report_id": report_id})
+                logger.exception(f"Error during trace analysis for report {report_id}")
                 raise
         else:
-            logger.info(
-                "No test cases failed. Skipping trace analysis.",
-                extra={"report_id": report_id},
-            )
+            logger.info("No test cases failed. Skipping trace analysis.")
 
         # 4. Draft report & explain failures
         initial_report = AutopsyReport(
@@ -168,16 +137,11 @@ class AutopsyOrchestrator:
         root_cause: str | None = None
         if failed_test_cases:
             try:
-                logger.info(
-                    "Generating root-cause failure explanation",
-                    extra={"report_id": report_id},
-                )
+                logger.info(f"Generating root-cause failure explanation for report {report_id}")
                 root_cause = self._explainer.explain(initial_report)
-                logger.info("Explanation generated successfully", extra={"report_id": report_id})
+                logger.info("Explanation generated successfully")
             except Exception:
-                logger.exception(
-                    "Error generating failure explanation", extra={"report_id": report_id}
-                )
+                logger.exception(f"Error generating failure explanation for report {report_id}")
                 raise
         else:
             root_cause = "All test cases passed. No failures to diagnose."
@@ -192,5 +156,5 @@ class AutopsyOrchestrator:
             root_cause_explanation=root_cause,
         )
 
-        logger.info("Autopsy process completed successfully", extra={"report_id": report_id})
+        logger.info(f"Autopsy process completed successfully for report {report_id}")
         return final_report
