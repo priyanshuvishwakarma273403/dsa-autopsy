@@ -1,6 +1,7 @@
 """Concrete implementation of the sandboxed execution engine."""
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,20 @@ from pathlib import Path
 
 from dsa_autopsy.interfaces.executor import BaseExecutor
 from dsa_autopsy.models.domain import ExecutionResult, SolutionTestCase, SourceCode, TraceFrame
+
+
+def _extract_exception_name(stderr_text: str) -> str | None:
+    """Extract a concise exception name or message from stderr traceback."""
+    if not stderr_text:
+        return None
+    m = re.search(r"([A-Za-z_]+Error|Instruction limit exceeded|TimeoutExpired)", stderr_text)
+    if m:
+        return m.group(0)
+    for line in reversed(stderr_text.splitlines()):
+        line = line.strip()
+        if line:
+            return line
+    return None
 
 
 class SandboxExecutor(BaseExecutor):
@@ -83,6 +98,16 @@ class SandboxExecutor(BaseExecutor):
                                 )
                             )
 
+                        error_msg = result_data.get("error_message")
+                        if (
+                            not error_msg
+                            or error_msg == "Sandbox process crashed or failed initialization"
+                        ):
+                            stderr_str = result_data.get("stderr", "") or process.stderr or ""
+                            exc_name = _extract_exception_name(stderr_str)
+                            if exc_name:
+                                error_msg = exc_name
+
                         return ExecutionResult(
                             test_case_id=test_case.id,
                             stdout=result_data.get("stdout", ""),
@@ -90,9 +115,11 @@ class SandboxExecutor(BaseExecutor):
                             exit_code=result_data.get("exit_code", 0),
                             execution_time_seconds=result_data.get("execution_time_seconds", 0.0),
                             trace_frames=trace_frames,
-                            error_message=result_data.get("error_message"),
+                            error_message=error_msg,
                         )
                     except Exception as e:
+                        stderr_str = process.stderr or ""
+                        exc_name = _extract_exception_name(stderr_str)
                         return ExecutionResult(
                             test_case_id=test_case.id,
                             stdout=process.stdout,
@@ -100,17 +127,21 @@ class SandboxExecutor(BaseExecutor):
                             exit_code=1,
                             execution_time_seconds=elapsed,
                             trace_frames=[],
-                            error_message=f"Sandbox serialization error: {e!s}",
+                            error_message=exc_name or f"Sandbox serialization error: {e!s}",
                         )
                 else:
+                    stderr_str = process.stderr or ""
+                    exc_name = _extract_exception_name(stderr_str)
                     return ExecutionResult(
                         test_case_id=test_case.id,
                         stdout=process.stdout,
-                        stderr=process.stderr or "Sandbox process exited without generating report",
+                        stderr=stderr_str or "Sandbox process exited without generating report",
                         exit_code=process.returncode,
                         execution_time_seconds=elapsed,
                         trace_frames=[],
-                        error_message="Sandbox process crashed or failed initialization",
+                        error_message=(
+                            exc_name or "Sandbox process crashed or failed initialization"
+                        ),
                     )
 
             except subprocess.TimeoutExpired as e:
