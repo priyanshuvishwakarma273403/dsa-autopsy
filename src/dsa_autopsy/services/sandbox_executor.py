@@ -283,6 +283,7 @@ def run_sandbox():
         if event == 'line':
             step_count += 1
             if step_count > max_steps:
+                sys.settrace(None)
                 raise RuntimeError("Instruction limit exceeded")
 
             local_vars = {{k: v for k, v in frame.f_locals.items() if not k.startswith("__")}}
@@ -341,6 +342,7 @@ def run_sandbox():
             trace_frames[-1]["local_variables"]["return_value"] = make_safe(return_val)
     except Exception as e:
         sys.settrace(None)
+        builtins.open = original_open
         exit_code = 1
         error_message = f"Runtime Exception: {{type(e).__name__}}: {{str(e)}}"
         captured_stderr.write(traceback.format_exc())
