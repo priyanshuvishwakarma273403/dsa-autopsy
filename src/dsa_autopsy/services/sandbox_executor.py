@@ -311,18 +311,25 @@ def run_sandbox():
 
     def trace_lines(frame, event, arg):
         nonlocal step_count
-        if event == 'line':
-            step_count += 1
-            if step_count > max_steps:
-                sys.settrace(None)
-                raise RuntimeError("Instruction limit exceeded")
+        try:
+            if event == 'line':
+                step_count += 1
+                if step_count > max_steps:
+                    sys.settrace(None)
+                    frame.f_trace = None
+                    raise RuntimeError("Instruction limit exceeded")
 
-            local_vars = {{k: v for k, v in frame.f_locals.items() if not k.startswith("__")}}
-            trace_frames.append({{
-                "line_number": frame.f_lineno,
-                "local_variables": make_safe(local_vars),
-                "instruction": frame.f_code.co_name
-            }})
+                local_vars = {{k: v for k, v in frame.f_locals.items() if not k.startswith("__")}}
+                trace_frames.append({{
+                    "line_number": frame.f_lineno,
+                    "local_variables": make_safe(local_vars),
+                    "instruction": frame.f_code.co_name
+                }})
+        except BaseException as e:
+            sys.settrace(None)
+            frame.f_trace = None
+            if isinstance(e, RuntimeError) and "Instruction limit exceeded" in str(e):
+                raise
         return trace_lines
 
     def trace_calls(frame, event, arg):
@@ -371,7 +378,7 @@ def run_sandbox():
         sys.settrace(None)
         if trace_frames:
             trace_frames[-1]["local_variables"]["return_value"] = make_safe(return_val)
-    except Exception as e:
+    except BaseException as e:
         sys.settrace(None)
         builtins.open = original_open
         exit_code = 1
