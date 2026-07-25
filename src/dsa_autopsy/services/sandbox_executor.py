@@ -16,7 +16,11 @@ def _extract_exception_name(stderr_text: str) -> str | None:
     """Extract a concise exception name or message from stderr traceback."""
     if not stderr_text:
         return None
-    m = re.search(r"([A-Za-z_]+Error|Instruction limit exceeded|TimeoutExpired)", stderr_text)
+    if "Instruction limit exceeded" in stderr_text:
+        return "Instruction limit exceeded"
+    if "TimeoutExpired" in stderr_text:
+        return "TimeoutExpired"
+    m = re.search(r"([A-Za-z_]+Error(?:\s*:\s*[^\n]+)?)", stderr_text)
     if m:
         return m.group(0)
     for line in reversed(stderr_text.splitlines()):
