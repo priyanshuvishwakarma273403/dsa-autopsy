@@ -36,7 +36,7 @@ def check_python_version() -> None:
 def install_dependencies() -> None:
     """Install package dependencies using uv if available, falling back to pip."""
     root_path = Path(__file__).resolve().parents[1]
-    
+
     # Check if uv is installed
     uv_path = shutil.which("uv")
     if uv_path:
@@ -47,7 +47,7 @@ def install_dependencies() -> None:
             return
         except subprocess.CalledProcessError as e:
             log_warn(f"Failed to sync with uv: {e}. Falling back to standard virtualenv + pip.")
-    
+
     # Fallback to pip
     log_info("Using standard 'pip' package manager...")
     venv_dir = root_path / ".venv"
@@ -70,7 +70,7 @@ def setup_pre_commit() -> None:
     """Install pre-commit git hooks."""
     root_path = Path(__file__).resolve().parents[1]
     pre_commit_path = shutil.which("pre-commit")
-    
+
     # If not found globally, check in venv
     if not pre_commit_path:
         if sys.platform == "win32":
@@ -93,7 +93,7 @@ def run_test_suite() -> None:
     """Run pytest suite to verify setup."""
     root_path = Path(__file__).resolve().parents[1]
     pytest_path = shutil.which("pytest")
-    
+
     if not pytest_path:
         if sys.platform == "win32":
             pytest_path = str(root_path / ".venv" / "Scripts" / "pytest.exe")

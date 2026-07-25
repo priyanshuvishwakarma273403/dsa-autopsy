@@ -64,6 +64,10 @@ ignore = [
     "ARG001", # Unused function argument
     "ARG002", # Unused method argument
 ]
+"scripts/**" = [
+    "D103", # Missing docstring in public function
+    "T201", # `print` found (scripts are CLI helpers and print by design)
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
