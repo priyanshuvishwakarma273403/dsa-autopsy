@@ -174,7 +174,7 @@ def find_entry_point(code_content):
         pass
     return None, None
 
-def main():
+def run_sandbox():
     if len(sys.argv) < 4:
         sys.exit(1)
 
@@ -363,6 +363,14 @@ def main():
 
     with original_open(output_path, "w", encoding="utf-8") as f:
         json.dump(result, f)
+
+def main():
+    try:
+        run_sandbox()
+    except BaseException:
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        raise
 
 if __name__ == "__main__":
     main()
