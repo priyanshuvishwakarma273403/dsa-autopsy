@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dsa-autopsy"
+version = "0.1.0"
+description = "An AI-powered algorithm debugging engine for evaluating code correctness, invariants, and edge cases."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "DSA Collective", email = "maintainers@dsacollective.org" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-cov>=5.0.0",
+    "mypy>=1.10.0",
+    "ruff>=0.4.8",
+    "pre-commit>=3.7.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dsa_autopsy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E: pycodestyle errors, F: Pyflakes, W: pycodestyle warnings, I: isort, N: pep8-naming
+# D: pydocstyle (Google convention), UP: pyupgrade, B: flake8-bugbear, A: flake8-builtins
+# C4: flake8-comprehensions, T20: flake8-print, RET: flake8-return, SIM: flake8-simplify
+# ARG: flake8-unused-arguments, PTH: flake8-use-pathlib, ERA: eradicate (dead code)
+# RUF: Ruff-specific rules
+select = [
+    "E", "F", "W", "I", "N", "D", "UP", "B", "A", "C4", "T20", "RET", "SIM", "ARG", "PTH", "ERA", "RUF"
+]
+ignore = [
+    "D100", # Missing docstring in public module (we enforce in package/class level, but allow empty file level docstrings in minor utility modules)
+    "D104", # Missing docstring in public package
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D101", # Missing docstring in public class
+    "D102", # Missing docstring in public method
+    "D103", # Missing docstring in public function
+    "ARG001", # Unused function argument
+    "ARG002", # Unused method argument
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["dsa_autopsy"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_reexport = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "pydantic.*"
+ignore_missing_imports = false
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --tb=short --cov=src/dsa_autopsy --cov-report=term-missing"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "unit: Quick unit tests focusing on isolated components.",
+    "integration: Tests verifying interaction between multiple components.",
+    "e2e: End-to-end tests validating the full system flow.",
+]
