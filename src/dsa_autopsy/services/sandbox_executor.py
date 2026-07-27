@@ -180,7 +180,26 @@ import socket
 import os
 from io import StringIO
 
+try:
+    import resource
+except ImportError:
+    resource = None
+
 original_open = builtins.open
+
+# List of modules that the user is allowed to import
+whitelisted_modules = {{
+    "math", "random", "collections", "itertools", "bisect", "heapq",
+    "functools", "typing", "json", "datetime", "string", "re", "copy", "time",
+}}
+
+# Pre-import all whitelisted modules so they are cached in sys.modules
+# and don't trigger disk access/file opening when imported by user code.
+for module_name in whitelisted_modules:
+    try:
+        __import__(module_name)
+    except Exception:
+        pass
 
 def make_safe(val):
     if isinstance(val, (int, float, bool, str)) or val is None:
@@ -239,11 +258,6 @@ def run_sandbox():
             json.dump(result, f)
         sys.exit(0)
 
-    whitelisted_modules = {{
-        "math", "random", "collections", "itertools", "bisect", "heapq",
-        "functools", "typing", "json", "datetime", "string", "re", "copy", "time",
-    }}
-
     original_import = builtins.__import__
 
     def sandboxed_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -252,32 +266,10 @@ def run_sandbox():
             raise PermissionError(f"Importing module '{{name}}' is disabled in the sandbox.")
         return original_import(name, globals, locals, fromlist, level)
 
-    def sandboxed_open(file, mode='r', *args, **kwargs):
-        raise PermissionError("File system access is disabled in the sandbox.")
-    builtins.open = sandboxed_open
-
-    def blocked_socket(*args, **kwargs):
-        raise PermissionError("Network access is disabled in the sandbox.")
-    socket.socket = blocked_socket
-
-    def blocked_process(*args, **kwargs):
-        raise PermissionError("Process execution is disabled in the sandbox.")
-    os.system = blocked_process
-    os.popen = blocked_process
-
-    captured_stdout = StringIO()
-    captured_stderr = StringIO()
-
-    sys.stdout = captured_stdout
-    sys.stderr = captured_stderr
-
     namespace = {{}}
-    builtins.__import__ = original_import
     try:
         compiled_code = compile(code_content, code_path, "exec")
     except Exception as e:
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
         result = {{
             "stdout": "",
             "stderr": traceback.format_exc(),
@@ -289,6 +281,93 @@ def run_sandbox():
         with original_open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f)
         sys.exit(0)
+
+    # 1. Monkeypatch in-place all dangerous components to prevent subclass gadget bypasses
+    def blocked_action(*args, **kwargs):
+        raise PermissionError("Access to this function/operation is disabled in the sandbox.")
+
+    # Patch builtins
+    builtins.open = blocked_action
+
+    # Patch socket
+    for func in [
+        'socket', 'socketpair', 'fromfd', 'create_connection',
+        'create_server', 'getaddrinfo', 'getnameinfo', 'gethostname',
+        'gethostbyname'
+    ]:
+        if hasattr(socket, func):
+            setattr(socket, func, blocked_action)
+
+    # Patch os
+    dangerous_os = [
+        'system', 'popen', 'fork', 'forkpty', 'execve', 'execv', 'execvp', 'execvpe',
+        'execl', 'execle', 'execlp', 'execlpe', 'spawnv', 'spawnve', 'spawnvp', 'spawnvpe',
+        'spawnl', 'spawnle', 'spawnlp', 'spawnlpe', 'posix_spawn', 'posix_spawnp',
+        'kill', 'killpg', 'open', 'read', 'write', 'dup', 'dup2', 'listdir', 'scandir',
+        'walk', 'remove', 'unlink', 'rmdir', 'removedirs', 'rename', 'renames',
+        'replace', 'chmod', 'chown', 'lchown', 'symlink', 'link', 'mkdir', 'makedirs'
+    ]
+    for func in dangerous_os:
+        if hasattr(os, func):
+            setattr(os, func, blocked_action)
+
+    # Clear environment variables
+    if hasattr(os, 'environ'):
+        os.environ.clear()
+
+    # Patch subprocess
+    try:
+        import subprocess
+        for func in [
+            'Popen', 'run', 'call', 'check_call', 'check_output',
+            'getstatusoutput', 'getoutput'
+        ]:
+            if hasattr(subprocess, func):
+                setattr(subprocess, func, blocked_action)
+    except Exception:
+        pass
+
+    # Clean up sys.modules to remove non-whitelisted modules (so subclass gadget can't access them)
+    for mod in list(sys.modules.keys()):
+        top_name = mod.split('.')[0]
+        if top_name not in whitelisted_modules and top_name not in [
+            'sys', 'builtins', 'json', 'traceback', 'time', 'ast', 'io', '_io'
+        ]:
+            sys.modules.pop(mod, None)
+
+    # 2. Apply OS-level resource limits (RLIMITs) if available
+    if resource is not None:
+        # Limit memory (Address Space) to 512MB to prevent OOM
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+        except Exception:
+            pass
+
+        # Limit CPU time to timeout + 2 seconds to terminate infinite/runaway C execution loops
+        cpu_limit = int({self.timeout_secs}) + 2
+        try:
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+        except Exception:
+            pass
+
+        # Limit number of open file descriptors to 10 (no new files
+        # or network connections can be opened)
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (10, 10))
+        except Exception:
+            pass
+
+        # Disable process creation (no fork)
+        try:
+            resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+        except Exception:
+            pass
+
+    captured_stdout = StringIO()
+    captured_stderr = StringIO()
+
+    sys.stdout = captured_stdout
+    sys.stderr = captured_stderr
 
     builtins.__import__ = sandboxed_import
 
@@ -377,7 +456,7 @@ def run_sandbox():
     start_time = time.perf_counter()
     sys.settrace(trace_calls)
     try:
-        builtins.open = sandboxed_open
+        builtins.open = blocked_action
         return_val = target_callable(**inputs)
         sys.settrace(None)
         if trace_frames:
