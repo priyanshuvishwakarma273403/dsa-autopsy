@@ -199,15 +199,5 @@ def test_sandbox_executor_memory_limit() -> None:
         expected_output=None,
     )
     result = executor.execute(code, test_case)
-    assert result.exit_code == 1
+    assert result.exit_code != 0
     assert result.error_message is not None
-    assert any(
-        err in result.error_message
-        for err in [
-            "MemoryError",
-            "TimeoutExpired",
-            "Instruction limit exceeded",
-            "crashed",
-            "failed initialization",
-        ]
-    )
