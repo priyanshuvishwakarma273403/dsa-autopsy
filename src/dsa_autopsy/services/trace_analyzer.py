@@ -27,11 +27,17 @@ class TraceAnalyzer(BaseAnalyzer):
 
         failing_results = []
         for res in execution_results:
-            if (
-                res.exit_code != 0
-                or res.error_message is not None
-                or "fail" in res.test_case_id.lower()
-            ):
+            is_failing = False
+            if res.matches_expected is not None:
+                is_failing = not res.matches_expected
+            else:
+                is_failing = (
+                    res.exit_code != 0
+                    or res.error_message is not None
+                    or "fail" in res.test_case_id.lower()
+                )
+
+            if is_failing:
                 failing_results.append(res)
             else:
                 passing_results.append(res)

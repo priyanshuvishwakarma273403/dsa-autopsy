@@ -57,6 +57,7 @@ class ExecutionResult:
     execution_time_seconds: float
     trace_frames: list[TraceFrame] = field(default_factory=list)
     error_message: str | None = None
+    matches_expected: bool | None = None
 
     @property
     def is_success(self) -> bool:

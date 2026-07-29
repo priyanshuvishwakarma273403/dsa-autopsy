@@ -164,3 +164,48 @@ def test_analyzer_false_assumption_ordering() -> None:
     assert violation.invariant.location == "line:1"
     assert violation.trace_frame_index == 0
     assert violation.context_variables["arr"] == [3, 1, 2]
+
+
+def test_analyzer_wrong_answer_bug() -> None:
+    """Test analyzer detects violations when failing run has wrong answer.
+
+    Uses matches_expected=False.
+    """
+    analyzer = TraceAnalyzer()
+    code = SourceCode(
+        content=("def add_one(x):\n    res = x + 1\n    return res\n"),
+        language="python",
+    )
+
+    passing_result = ExecutionResult(
+        test_case_id="tc_pass",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        trace_frames=[
+            TraceFrame(line_number=2, local_variables={"x": 1, "res": 2}),
+        ],
+        matches_expected=True,
+    )
+
+    failing_result = ExecutionResult(
+        test_case_id="tc_wrong_val",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        trace_frames=[
+            TraceFrame(line_number=2, local_variables={"x": 2, "res": 2}),
+        ],
+        matches_expected=False,
+    )
+
+    violations = analyzer.analyze(code, [passing_result, failing_result])
+
+    assert len(violations) >= 1
+    violation = next(v for v in violations if "x < res" in v.invariant.expression)
+    assert violation.invariant.location == "line:2"
+    assert violation.trace_frame_index == 0
+    assert violation.context_variables["x"] == 2
+    assert violation.context_variables["res"] == 2
