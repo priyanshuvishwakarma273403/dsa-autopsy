@@ -2,52 +2,36 @@
 
 An AI-powered algorithm debugging engine designed to analyze code failures, identify violated invariants, pinpoint invalid assumptions, and explain execution path bugs.
 
----
-
-## 🎯 Project Goal
-
-When developer solutions fail algorithm problems, traditional tools only return feedback like "Wrong Answer". `dsa-autopsy` aims to provide a detailed post-mortem autopsy:
-1. **Explain the Failure**: Explain why the code failed in plain, human-readable terms.
-2. **Locate Edge Cases**: Identify what input boundaries caused the execution state to diverge.
-3. **Pinpoint Invariants**: Discover loops or functional invariants that were broken.
-4. **Invalid Assumptions**: Identify logic lines where developer assumptions proved false.
-5. **Trace the Bug**: Render the exact execution path leading to the bug.
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Python 3.12 or 3.13
-- [uv](https://github.com/astral-sh/uv) (Preferred) or standard virtualenv
-
-### Installation & Developer Setup
-
-To bootstrap the local development environment, run the setup script:
+## Installation
 
 ```bash
-python scripts/setup_dev.py
+pip install -e ".[dev]"
 ```
 
-### Running Tests
+## Development
 
-The test suite is built on pytest. To run all checks locally:
-
+To format the code, run:
 ```bash
-uv run pytest
+python -m ruff format src tests
 ```
 
-To run linting and type checking:
-
+To run lint checks:
 ```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src/ tests/
+python -m ruff check src tests
 ```
 
----
+To run type checking:
+```bash
+python -m mypy src tests
+```
 
-## 📄 License
+## Testing
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+To run the test suite:
+```bash
+python -m pytest
+```
+
+## License
+
+This project is licensed under the MIT License.
