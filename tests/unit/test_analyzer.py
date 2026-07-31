@@ -26,6 +26,7 @@ def test_analyzer_off_by_one_boundary_bug() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=True,
         trace_frames=[
             # Loop condition evaluation at line 3 (i=0)
             TraceFrame(line_number=3, local_variables={"i": 0, "arr": [10, 20], "target": 10}),
@@ -41,6 +42,7 @@ def test_analyzer_off_by_one_boundary_bug() -> None:
         stderr="IndexError: list index out of range",
         exit_code=1,
         execution_time_seconds=0.1,
+        matches_expected=False,
         trace_frames=[
             TraceFrame(line_number=3, local_variables={"i": 0, "arr": [10, 20], "target": 30}),
             TraceFrame(line_number=3, local_variables={"i": 1, "arr": [10, 20], "target": 30}),
@@ -90,6 +92,7 @@ def test_analyzer_incorrect_loop_termination() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=True,
         trace_frames=[
             TraceFrame(
                 line_number=4,
@@ -105,6 +108,7 @@ def test_analyzer_incorrect_loop_termination() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=False,
         trace_frames=[
             TraceFrame(
                 line_number=4,
@@ -141,6 +145,7 @@ def test_analyzer_false_assumption_ordering() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=True,
         trace_frames=[
             TraceFrame(line_number=1, local_variables={"arr": [1, 2, 3], "target": 2}),
         ],
@@ -152,6 +157,7 @@ def test_analyzer_false_assumption_ordering() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=False,
         trace_frames=[
             TraceFrame(line_number=1, local_variables={"arr": [3, 1, 2], "target": 2}),
         ],
@@ -183,10 +189,10 @@ def test_analyzer_wrong_answer_bug() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=True,
         trace_frames=[
             TraceFrame(line_number=2, local_variables={"x": 1, "res": 2}),
         ],
-        matches_expected=True,
     )
 
     failing_result = ExecutionResult(
@@ -195,17 +201,177 @@ def test_analyzer_wrong_answer_bug() -> None:
         stderr="",
         exit_code=0,
         execution_time_seconds=0.1,
+        matches_expected=False,
         trace_frames=[
             TraceFrame(line_number=2, local_variables={"x": 2, "res": 2}),
         ],
-        matches_expected=False,
     )
 
     violations = analyzer.analyze(code, [passing_result, failing_result])
 
     assert len(violations) >= 1
-    violation = next(v for v in violations if "x < res" in v.invariant.expression)
+    # Note: 'res' comes alphabetically before 'x', so the canonical direction is 'res > x'
+    violation = next(v for v in violations if "res > x" in v.invariant.expression)
     assert violation.invariant.location == "line:2"
     assert violation.trace_frame_index == 0
     assert violation.context_variables["x"] == 2
     assert violation.context_variables["res"] == 2
+
+
+def test_analyzer_exact_set_of_violations_and_pruning() -> None:
+    """Test that redundant/implied relations are successfully pruned."""
+    analyzer = TraceAnalyzer()
+    code = SourceCode(content="def dummy(): pass", language="python")
+
+    passing_result = ExecutionResult(
+        test_case_id="tc_pass",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=True,
+        trace_frames=[
+            TraceFrame(line_number=1, local_variables={"a": 1, "b": 5}),
+        ],
+    )
+
+    failing_result = ExecutionResult(
+        test_case_id="tc_fail",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=False,
+        trace_frames=[
+            TraceFrame(line_number=1, local_variables={"a": 5, "b": 5}),
+        ],
+    )
+
+    violations = analyzer.analyze(code, [passing_result, failing_result])
+
+    # In passing run: a=1, b=5.
+    # Candidates generated: a < b, a <= b, a != b.
+    # Since a < b holds, the stronger relation is kept, and a <= b and a != b are pruned.
+    # Therefore, only one violation (for 'a < b') should be reported!
+    expressions = [v.invariant.expression for v in violations]
+    assert expressions == ["a < b"]
+
+
+def test_analyzer_three_state_evaluation() -> None:
+    """Test that missing variables or incompatible types do not trigger spurious violations."""
+    analyzer = TraceAnalyzer()
+    code = SourceCode(content="def dummy(): pass", language="python")
+
+    passing_result = ExecutionResult(
+        test_case_id="tc_pass",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=True,
+        trace_frames=[
+            TraceFrame(line_number=1, local_variables={"x": 5, "y": 10}),
+        ],
+    )
+
+    failing_result = ExecutionResult(
+        test_case_id="tc_fail",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=False,
+        trace_frames=[
+            # Frame 0: y is missing (not bound yet). Should not violate x < y.
+            TraceFrame(line_number=1, local_variables={"x": 5}),
+            # Frame 1: y is None (raises TypeError on comparison). Should not violate x < y.
+            TraceFrame(line_number=1, local_variables={"x": 5, "y": None}),
+            # Frame 2: x is 10, y is 5. Actually violates x < y!
+            TraceFrame(line_number=1, local_variables={"x": 10, "y": 5}),
+        ],
+    )
+
+    violations = analyzer.analyze(code, [passing_result, failing_result])
+
+    assert len(violations) == 1
+    assert violations[0].trace_frame_index == 2
+    assert violations[0].invariant.expression == "x < y"
+
+
+def test_analyzer_min_observations() -> None:
+    """Test that min_observations skips lines with insufficient passing observations."""
+    # Analyzer requiring at least 2 passing frames per line
+    analyzer = TraceAnalyzer(min_observations=2)
+    code = SourceCode(content="def dummy(): pass", language="python")
+
+    passing_result = ExecutionResult(
+        test_case_id="tc_pass",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=True,
+        trace_frames=[
+            # Line 1 has 2 observations across the trace
+            TraceFrame(line_number=1, local_variables={"x": 5, "y": 10}),
+            TraceFrame(line_number=1, local_variables={"x": 6, "y": 10}),
+            # Line 2 has only 1 observation
+            TraceFrame(line_number=2, local_variables={"a": 1, "b": 2}),
+        ],
+    )
+
+    failing_result = ExecutionResult(
+        test_case_id="tc_fail",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=False,
+        trace_frames=[
+            TraceFrame(line_number=1, local_variables={"x": 12, "y": 10}),
+            TraceFrame(line_number=2, local_variables={"a": 5, "b": 2}),
+        ],
+    )
+
+    violations = analyzer.analyze(code, [passing_result, failing_result])
+
+    # Only line 1 violations should be found because line 2 had only
+    # 1 observation (< min_observations)
+    assert len(violations) > 0
+    for v in violations:
+        assert v.invariant.location == "line:1"
+
+
+def test_analyzer_stable_invariant_id() -> None:
+    """Test that invariant IDs are derived stably from expression and location."""
+    analyzer = TraceAnalyzer()
+    code = SourceCode(content="def dummy(): pass", language="python")
+
+    passing_result = ExecutionResult(
+        test_case_id="tc_pass",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=True,
+        trace_frames=[
+            TraceFrame(line_number=4, local_variables={"left": 0, "right": 2}),
+        ],
+    )
+
+    failing_result = ExecutionResult(
+        test_case_id="tc_fail",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=False,
+        trace_frames=[
+            TraceFrame(line_number=4, local_variables={"left": 2, "right": 2}),
+        ],
+    )
+
+    violations = analyzer.analyze(code, [passing_result, failing_result])
+
+    assert len(violations) == 1
+    assert violations[0].invariant.id == "inv_line4_left_lt_right"

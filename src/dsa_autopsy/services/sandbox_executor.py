@@ -47,6 +47,7 @@ class SandboxExecutor(BaseExecutor):
                 stderr=f"Unsupported language: {code.language}",
                 exit_code=1,
                 execution_time_seconds=0.0,
+                matches_expected=False,
                 trace_frames=[],
                 error_message=f"Unsupported language: {code.language}",
             )
@@ -118,6 +119,7 @@ class SandboxExecutor(BaseExecutor):
                             stderr=result_data.get("stderr", ""),
                             exit_code=result_data.get("exit_code", 0),
                             execution_time_seconds=result_data.get("execution_time_seconds", 0.0),
+                            matches_expected=False,
                             trace_frames=trace_frames,
                             error_message=error_msg,
                         )
@@ -130,6 +132,7 @@ class SandboxExecutor(BaseExecutor):
                             stderr=process.stderr + f"\nFailed to parse sandbox output: {e!s}",
                             exit_code=1,
                             execution_time_seconds=elapsed,
+                            matches_expected=False,
                             trace_frames=[],
                             error_message=exc_name or f"Sandbox serialization error: {e!s}",
                         )
@@ -142,6 +145,7 @@ class SandboxExecutor(BaseExecutor):
                         stderr=stderr_str or "Sandbox process exited without generating report",
                         exit_code=process.returncode,
                         execution_time_seconds=elapsed,
+                        matches_expected=False,
                         trace_frames=[],
                         error_message=(
                             exc_name or "Sandbox process crashed or failed initialization"
@@ -162,6 +166,7 @@ class SandboxExecutor(BaseExecutor):
                     stderr=stderr_str,
                     exit_code=1,
                     execution_time_seconds=elapsed,
+                    matches_expected=False,
                     trace_frames=[],
                     error_message=(
                         f"TimeoutExpired: Execution exceeded limit of {self.timeout_secs}s"

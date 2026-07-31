@@ -7,7 +7,25 @@ from dsa_autopsy.models.domain import ExecutionResult, Invariant, SourceCode, Vi
 
 
 class TraceAnalyzer(BaseAnalyzer):
-    """Analyzes execution traces to identify violated loop/function invariants."""
+    """Analyzes execution traces to identify violated loop/function invariants.
+
+    Note on source-agnostic design:
+    This analyzer is deliberately source-agnostic to decouple its analysis logic from
+    language-specific AST schemas or parsing subtleties. It infers loop/function invariants
+    solely from value states recorded in execution trace frames, making it robust to variations in
+    source structure.
+    """
+
+    def __init__(self, min_observations: int = 1, max_candidates: int = 1000) -> None:
+        """Initialize the trace analyzer.
+
+        Args:
+            min_observations: Minimum number of passing frames required at a line
+                before mining invariants for that line.
+            max_candidates: Maximum number of candidate invariants to evaluate per line.
+        """
+        self.min_observations = min_observations
+        self.max_candidates = max_candidates
 
     def analyze(
         self, code: SourceCode, execution_results: list[ExecutionResult]
@@ -21,23 +39,13 @@ class TraceAnalyzer(BaseAnalyzer):
         Returns:
             A list of detected violations and invariant breaks.
         """
-        _ = code
+        code_lines = code.lines
+
         # 1. Classify execution results into passing and failing runs
         passing_results = []
-
         failing_results = []
         for res in execution_results:
-            is_failing = False
-            if res.matches_expected is not None:
-                is_failing = not res.matches_expected
-            else:
-                is_failing = (
-                    res.exit_code != 0
-                    or res.error_message is not None
-                    or "fail" in res.test_case_id.lower()
-                )
-
-            if is_failing:
+            if not res.matches_expected:
                 failing_results.append(res)
             else:
                 passing_results.append(res)
@@ -56,30 +64,36 @@ class TraceAnalyzer(BaseAnalyzer):
         # 3. Helper functions to evaluate candidate invariants
         def is_sorted(val: Any) -> bool:
             try:
-                if not isinstance(val, (list, tuple)):
+                if not isinstance(val, (list, tuple, str)):
                     return False
                 return all(val[i] <= val[i + 1] for i in range(len(val) - 1))
             except Exception:
                 return False
 
-        def eval_candidate(rel: tuple[str, str, Any], locals_dict: dict[str, Any]) -> bool:
+        def eval_candidate(rel: tuple[str, str, Any], locals_dict: dict[str, Any]) -> int:
+            # Returns:
+            #  1: Holds (True)
+            #  0: Violated (False)
+            # -1: Not Applicable (missing variables or type errors/exceptions)
             left, op, right = rel
             if left not in locals_dict:
-                return False
+                return -1
 
             left_val = locals_dict[left]
 
             if isinstance(right, str) and right.startswith("len(") and right.endswith(")"):
                 seq_name = right[4:-1]
                 if seq_name not in locals_dict:
-                    return False
+                    return -1
                 seq_val = locals_dict[seq_name]
                 try:
                     right_val = len(seq_val)
                 except Exception:
-                    return False
-            elif right == "is_sorted":
-                return is_sorted(left_val)
+                    return -1
+            elif right == "is_sorted" or op == "is_sorted":
+                if not isinstance(left_val, (list, tuple, str)):
+                    return -1
+                return 1 if is_sorted(left_val) else 0
             elif isinstance(right, str) and right in locals_dict:
                 right_val = locals_dict[right]
             else:
@@ -87,28 +101,28 @@ class TraceAnalyzer(BaseAnalyzer):
 
             try:
                 if op == "<":
-                    return bool(left_val < right_val)
+                    return 1 if left_val < right_val else 0
                 if op == "<=":
-                    return bool(left_val <= right_val)
+                    return 1 if left_val <= right_val else 0
                 if op == ">":
-                    return bool(left_val > right_val)
+                    return 1 if left_val > right_val else 0
                 if op == ">=":
-                    return bool(left_val >= right_val)
+                    return 1 if left_val >= right_val else 0
                 if op == "==":
-                    return bool(left_val == right_val)
+                    return 1 if left_val == right_val else 0
                 if op == "!=":
-                    return bool(left_val != right_val)
-                if op == "is_sorted":
-                    return bool(is_sorted(left_val))
+                    return 1 if left_val != right_val else 0
+            except (TypeError, ValueError, AttributeError):
+                return -1
             except Exception:
-                pass
-            return False
+                return -1
+            return -1
 
         # 4. Generate and filter invariants that hold across all passing runs
         invariants_by_line: dict[int, list[tuple[str, str, Any]]] = {}
 
         for line_num, frames in passing_frames_by_line.items():
-            if not frames:
+            if len(frames) < self.min_observations:
                 continue
 
             # Find common variables present in all frames at this line
@@ -119,22 +133,30 @@ class TraceAnalyzer(BaseAnalyzer):
             # Exclude internal variables and return_value
             common_vars = {v for v in common_vars if not v.startswith("__") and v != "return_value"}
 
+            sorted_vars = sorted(common_vars)
             candidates: list[tuple[str, str, Any]] = []
-            for var in common_vars:
+
+            for var in sorted_vars:
                 val = frames[0][var]
                 if isinstance(val, (int, float)):
-                    candidates.append((var, ">=", 0))
                     candidates.append((var, ">", 0))
+                    candidates.append((var, ">=", 0))
 
                 if isinstance(val, (list, tuple, str)):
                     candidates.append((var, "is_sorted", "is_sorted"))
 
-                for other in common_vars:
+                for other in sorted_vars:
                     if other == var:
                         continue
                     other_val = frames[0][other]
 
-                    if isinstance(val, (int, float)) and isinstance(other_val, (int, float)):
+                    # Enforce a canonical order for variable-to-variable comparison
+                    # to generate only one direction for each unordered pair.
+                    if (
+                        var < other
+                        and isinstance(val, (int, float))
+                        and isinstance(other_val, (int, float))
+                    ):
                         candidates.append((var, "<", other))
                         candidates.append((var, "<=", other))
                         candidates.append((var, ">", other))
@@ -142,6 +164,7 @@ class TraceAnalyzer(BaseAnalyzer):
                         candidates.append((var, "==", other))
                         candidates.append((var, "!=", other))
 
+                    # Variable-to-length comparison
                     if isinstance(val, (int, float)) and isinstance(other_val, (list, tuple, str)):
                         candidates.append((var, "<", f"len({other})"))
                         candidates.append((var, "<=", f"len({other})"))
@@ -150,17 +173,52 @@ class TraceAnalyzer(BaseAnalyzer):
                         candidates.append((var, "==", f"len({other})"))
                         candidates.append((var, "!=", f"len({other})"))
 
+            # Limit the total number of candidates evaluated per line
+            if len(candidates) > self.max_candidates:
+                candidates = candidates[: self.max_candidates]
+
             valid_invariants = []
             for cand in candidates:
-                if all(eval_candidate(cand, f) for f in frames):
+                if all(eval_candidate(cand, f) == 1 for f in frames):
                     valid_invariants.append(cand)
 
-            if valid_invariants:
-                invariants_by_line[line_num] = valid_invariants
+            # Group valid invariants by (left, right) to prune implied/redundant relationships
+            grouped: dict[tuple[str, Any], set[str]] = {}
+            for left, op, right in valid_invariants:
+                grouped.setdefault((left, right), set()).add(op)
+
+            pruned_invariants: list[tuple[str, str, Any]] = []
+            for (left, right), ops in grouped.items():
+                if "<" in ops:
+                    ops.discard("<=")
+                    ops.discard("!=")
+                if ">" in ops:
+                    ops.discard(">=")
+                    ops.discard("!=")
+                if "==" in ops:
+                    ops.discard("<=")
+                    ops.discard(">=")
+                if right == 0 and ">" in ops:
+                    ops.discard(">=")
+
+                for op in ops:
+                    pruned_invariants.append((left, op, right))
+
+            if pruned_invariants:
+                invariants_by_line[line_num] = pruned_invariants
 
         # 5. Check failing runs to locate the first violation
         violations: list[Violation] = []
-        invariant_counter = 1
+
+        op_map = {
+            "<": "lt",
+            "<=": "lte",
+            ">": "gt",
+            ">=": "gte",
+            "==": "eq",
+            "!=": "neq",
+            "is_sorted": "is_sorted",
+        }
 
         for res in failing_results:
             for idx, frame in enumerate(res.trace_frames):
@@ -170,17 +228,36 @@ class TraceAnalyzer(BaseAnalyzer):
 
                 locals_dict = frame.local_variables
                 for cand in invariants_by_line[line_num]:
-                    if not eval_candidate(cand, locals_dict):
+                    if eval_candidate(cand, locals_dict) == 0:
                         left, op, right = cand
                         expr = f"is_sorted({left})" if op == "is_sorted" else f"{left} {op} {right}"
 
+                        # Derive a stable ID from the expression and line number
+                        clean_op = op_map.get(op, op)
+                        clean_right = str(right).replace("(", "_").replace(")", "_")
+                        clean_left = "".join(c for c in left if c.isalnum() or c == "_")
+                        clean_right = "".join(c for c in clean_right if c.isalnum() or c == "_")
+                        expr_part = f"{clean_left}_{clean_op}_{clean_right}"
+                        while "__" in expr_part:
+                            expr_part = expr_part.replace("__", "_")
+                        expr_part = expr_part.strip("_")
+                        inv_id = f"inv_line{line_num}_{expr_part}"
+
+                        # Get source code line for descriptive info
+                        line_content = ""
+                        if 1 <= line_num <= len(code_lines):
+                            line_content = code_lines[line_num - 1].strip()
+
+                        desc = f"Invariant '{expr}' violated in failing run"
+                        if line_content:
+                            desc += f" at: {line_content}"
+
                         inv = Invariant(
-                            id=f"inv_line{line_num}_{invariant_counter}",
+                            id=inv_id,
                             expression=expr,
                             location=f"line:{line_num}",
-                            description=f"Invariant '{expr}' violated in failing run",
+                            description=desc,
                         )
-                        invariant_counter += 1
 
                         context_vars: dict[str, Any] = {}
                         if left in locals_dict:
@@ -202,7 +279,7 @@ class TraceAnalyzer(BaseAnalyzer):
                             test_case_id=res.test_case_id,
                             trace_frame_index=idx,
                             context_variables=context_vars,
-                            explanation=f"Invariant '{expr}' violated. Context: {context_vars}",
+                            explanation=f"Invariant '{expr}' violated.",
                         )
                         violations.append(violation)
 
