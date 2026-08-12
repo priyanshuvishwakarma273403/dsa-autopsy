@@ -1,9 +1,11 @@
 """Concrete implementation of the execution trace analyzer."""
 
+import ast
 from typing import Any
 
 from dsa_autopsy.interfaces.analyzer import BaseAnalyzer
 from dsa_autopsy.models.domain import ExecutionResult, Invariant, SourceCode, Violation
+from dsa_autopsy.services.ast_parser import ASTBoundExtractor
 
 
 class TraceAnalyzer(BaseAnalyzer):
@@ -110,21 +112,20 @@ class TraceAnalyzer(BaseAnalyzer):
 
             left_val = locals_dict[left]
 
-            if isinstance(right, str) and right.startswith("len(") and right.endswith(")"):
-                seq_name = right[4:-1]
-                if seq_name not in locals_dict:
-                    return -1
-                seq_val = locals_dict[seq_name]
-                try:
-                    right_val = len(seq_val)
-                except Exception:
-                    return -1
-            elif right == "is_sorted" or op == "is_sorted":
+            if right == "is_sorted" or op == "is_sorted":
                 if not isinstance(left_val, (list, tuple, str)):
                     return -1
                 return 1 if is_sorted(left_val) else 0
-            elif isinstance(right, str) and right in locals_dict:
-                right_val = locals_dict[right]
+
+            if isinstance(right, str):
+                if right in locals_dict:
+                    right_val = locals_dict[right]
+                else:
+                    try:
+                        eval_globals = {"len": len, "range": range, "set": set, "list": list}
+                        right_val = eval(right, eval_globals, locals_dict)
+                    except Exception:
+                        right_val = right
             else:
                 right_val = right
 
@@ -163,6 +164,17 @@ class TraceAnalyzer(BaseAnalyzer):
                 return -1
             return -1
 
+        # Extract seed invariants from source code AST
+        seed_bounds: dict[int, list[tuple[Any, ...]]] = {}
+        if code.language.lower() in ["python", "py"]:
+            try:
+                tree = ast.parse(code.content)
+                extractor = ASTBoundExtractor()
+                extractor.visit(tree)
+                seed_bounds = extractor.bounds
+            except Exception:
+                pass
+
         # 4. Generate and filter invariants that hold across all passing runs
         invariants_by_line: dict[int, list[tuple[Any, ...]]] = {}
 
@@ -180,6 +192,45 @@ class TraceAnalyzer(BaseAnalyzer):
 
             sorted_vars = sorted(common_vars)
             candidates: list[tuple[Any, ...]] = []
+
+            # Add seed invariants for this line
+            if line_num in seed_bounds:
+                for bound in seed_bounds[line_num]:
+                    left = bound[0]
+                    right = bound[2]
+                    if left in common_vars:
+                        # Validate that all variables inside right (if it's a
+                        # string expression) are in common_vars
+                        is_valid = True
+                        if isinstance(right, str):
+                            try:
+                                expr_tree = ast.parse(right)
+                                builtins = {
+                                    "len",
+                                    "range",
+                                    "set",
+                                    "list",
+                                    "dict",
+                                    "str",
+                                    "int",
+                                    "float",
+                                    "abs",
+                                    "max",
+                                    "min",
+                                    "sum",
+                                }
+                                for node in ast.walk(expr_tree):
+                                    if (
+                                        isinstance(node, ast.Name)
+                                        and node.id not in common_vars
+                                        and node.id not in builtins
+                                    ):
+                                        is_valid = False
+                                        break
+                            except Exception:
+                                is_valid = False
+                        if is_valid and bound not in candidates:
+                            candidates.append(bound)
 
             for var in sorted_vars:
                 val = frames[0][var]

@@ -541,3 +541,67 @@ def test_analyzer_key_value_invariants() -> None:
         or "set(d_ind.keys()) == set(range(len(size)))" in expressions
     )
     assert "all(d_freq[k] == arr.count(k) for k in d_freq)" in expressions
+
+
+def test_analyzer_static_bounds_propagation() -> None:
+    """Test that static bounds (seed invariants) are extracted and propagated to the analyzer."""
+    analyzer = TraceAnalyzer()
+
+    # Python code with both a loop limit and limit assignments
+    code = SourceCode(
+        content=(
+            "def search(arr, target):\n"
+            "    low = 0\n"
+            "    high = len(arr) - 1\n"
+            "    for i in range(len(arr)):\n"
+            "        pass\n"
+        ),
+        language="python",
+    )
+
+    # In passing runs:
+    # low = 0, high = 2 (so low <= high holds).
+    # i goes from 0 to 2 (so 0 <= i < len(arr) holds).
+    passing_result = ExecutionResult(
+        test_case_id="tc_pass",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=True,
+        trace_frames=[
+            # Frame at loop header (line 4)
+            TraceFrame(
+                line_number=4,
+                local_variables={"low": 0, "high": 2, "i": 0, "arr": [10, 20, 30]},
+            ),
+            TraceFrame(
+                line_number=4,
+                local_variables={"low": 0, "high": 2, "i": 1, "arr": [10, 20, 30]},
+            ),
+        ],
+    )
+
+    # In failing run, we violate low <= high (by setting low = 3, high = 2) at line 4,
+    # and i < len(arr) (by setting i = 5, len(arr) = 3) at line 4.
+    failing_result = ExecutionResult(
+        test_case_id="tc_fail",
+        stdout="",
+        stderr="",
+        exit_code=0,
+        execution_time_seconds=0.1,
+        matches_expected=False,
+        trace_frames=[
+            TraceFrame(
+                line_number=4,
+                local_variables={"low": 3, "high": 2, "i": 5, "arr": [10, 20, 30]},
+            ),
+        ],
+    )
+
+    violations = analyzer.analyze(code, [passing_result, failing_result])
+
+    expressions = [v.invariant.expression for v in violations]
+    # We expect "low <= high" and "i < len(arr)" to be evaluated and found violated
+    assert "low <= high" in expressions
+    assert "i < len(arr)" in expressions
