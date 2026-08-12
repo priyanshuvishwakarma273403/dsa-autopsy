@@ -148,8 +148,7 @@ class TraceAnalyzer(BaseAnalyzer):
                 if op == "keys_match_indices":
                     if isinstance(right_val, int):
                         return 1 if set(left_val.keys()) == set(range(right_val)) else 0
-                    else:
-                        return 1 if set(left_val.keys()) == set(range(len(right_val))) else 0
+                    return 1 if set(left_val.keys()) == set(range(len(right_val))) else 0
                 if op == "values_are_frequencies":
                     def get_count(coll: Any, item: Any) -> int:
                         if hasattr(coll, "count"):
@@ -225,11 +224,15 @@ class TraceAnalyzer(BaseAnalyzer):
                         candidates.append((var, "%", other, "==", 0))
 
                     # Set Containment
-                    if isinstance(val, (list, tuple, set, dict)) and isinstance(other_val, (int, float, str)):
+                    if isinstance(val, (list, tuple, set, dict)) and isinstance(
+                        other_val, (int, float, str)
+                    ):
                         candidates.append((other, "in", var))
 
                     # Sublist & Subset relations
-                    if isinstance(val, (list, tuple, set, dict)) and isinstance(other_val, (list, tuple, set, dict)):
+                    if isinstance(val, (list, tuple, set, dict)) and isinstance(
+                        other_val, (list, tuple, set, dict)
+                    ):
                         candidates.append((other, "issubset", var))
 
                     # Key-Value Invariants
@@ -321,11 +324,11 @@ class TraceAnalyzer(BaseAnalyzer):
                             elif op == "issubset":
                                 expr = f"set({left}).issubset(set({right}))"
                             elif op == "keys_match_indices":
-                                is_int = False
-                                if isinstance(right, int):
-                                    is_int = True
-                                elif isinstance(right, str) and right in locals_dict and isinstance(locals_dict[right], int):
-                                    is_int = True
+                                is_int = isinstance(right, int) or (
+                                    isinstance(right, str)
+                                    and right in locals_dict
+                                    and isinstance(locals_dict[right], int)
+                                )
                                 if is_int:
                                     expr = f"set({left}.keys()) == set(range({right}))"
                                 else:
@@ -377,9 +380,8 @@ class TraceAnalyzer(BaseAnalyzer):
                                 context_vars[seq_name] = locals_dict[seq_name]
                                 context_vars[f"len({seq_name})"] = len(locals_dict[seq_name])
 
-                        if len(cand) == 5:
-                            if isinstance(right2, str) and right2 in locals_dict:
-                                context_vars[right2] = locals_dict[right2]
+                        if len(cand) == 5 and isinstance(right2, str) and right2 in locals_dict:
+                            context_vars[right2] = locals_dict[right2]
 
                         violation = Violation(
                             invariant=inv,

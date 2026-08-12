@@ -536,6 +536,9 @@ def test_analyzer_key_value_invariants() -> None:
     violations = analyzer.analyze(code, [passing_result, failing_result])
 
     expressions = [v.invariant.expression for v in violations]
-    assert "set(d_ind.keys()) == set(range(size))" in expressions or "set(d_ind.keys()) == set(range(len(size)))" in expressions
+    assert (
+        "set(d_ind.keys()) == set(range(size))" in expressions
+        or "set(d_ind.keys()) == set(range(len(size)))" in expressions
+    )
     assert "all(d_freq[k] == arr.count(k) for k in d_freq)" in expressions
 
