@@ -1,6 +1,7 @@
 """Tests for SandboxExecutor module."""
 
 import sys
+from typing import Any
 
 import pytest
 
@@ -203,7 +204,7 @@ def test_sandbox_executor_memory_limit() -> None:
     assert result.error_message is not None
 
 
-def test_sandbox_executor_cpp_success(monkeypatch) -> None:
+def test_sandbox_executor_cpp_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test successful C++ execution with mocked compilation and GDB tracing."""
     import json
     import subprocess
@@ -213,7 +214,7 @@ def test_sandbox_executor_cpp_success(monkeypatch) -> None:
     mock_run = MagicMock()
     call_count = 0
 
-    def side_effect_fn(*args, **kwargs):
+    def side_effect_fn(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -260,7 +261,7 @@ def test_sandbox_executor_cpp_success(monkeypatch) -> None:
     assert result.trace_frames[0].local_variables.get("return_value") == 8
 
 
-def test_sandbox_executor_java_success(monkeypatch) -> None:
+def test_sandbox_executor_java_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test successful Java execution with mocked compilation and JDI tracing."""
     import json
     import subprocess
@@ -270,7 +271,7 @@ def test_sandbox_executor_java_success(monkeypatch) -> None:
     mock_run = MagicMock()
     call_count = 0
 
-    def side_effect_fn(*args, **kwargs):
+    def side_effect_fn(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count == 1:

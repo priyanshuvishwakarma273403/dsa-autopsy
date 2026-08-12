@@ -24,10 +24,10 @@ class ASTParser(BaseParser):
         Raises:
             ParsingError: If the source code language is not Python or contains syntax errors.
         """
+        metadata: dict[str, Any] = {}
         if code.language.lower() in ["cpp", "c++"]:
             import re
 
-            metadata: dict[str, Any] = {}
             pattern = re.compile(r"(?:\w+::)?(\w+)\s+(\w+)\s*\(([^)]*)\)\s*\{")
             for match in pattern.finditer(code.content):
                 _, name, args_str = match.groups()
@@ -50,7 +50,7 @@ class ASTParser(BaseParser):
         if code.language.lower() == "java":
             import re
 
-            metadata: dict[str, Any] = {}
+            metadata = {}
             pattern = re.compile(
                 r"(?:public|private|protected|static|\s)+\s+(\w+)\s+(\w+)\s*\(([^)]*)\)\s*(?:throws\s+[\w\s,]+)?\s*\{"
             )
@@ -78,7 +78,7 @@ class ASTParser(BaseParser):
         except Exception as e:
             raise ParsingError(f"Failed to parse source code: {e}") from e
 
-        metadata: dict[str, Any] = {}
+        metadata = {}
 
         class FunctionVisitor(ast.NodeVisitor):
             def __init__(self) -> None:
