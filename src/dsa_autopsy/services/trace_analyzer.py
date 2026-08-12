@@ -150,10 +150,12 @@ class TraceAnalyzer(BaseAnalyzer):
                         return 1 if set(left_val.keys()) == set(range(right_val)) else 0
                     return 1 if set(left_val.keys()) == set(range(len(right_val))) else 0
                 if op == "values_are_frequencies":
+
                     def get_count(coll: Any, item: Any) -> int:
                         if hasattr(coll, "count"):
                             return int(coll.count(item))
                         return 1 if item in coll else 0
+
                     return 1 if all(left_val[k] == get_count(right_val, k) for k in left_val) else 0
             except (TypeError, ValueError, AttributeError):
                 return -1

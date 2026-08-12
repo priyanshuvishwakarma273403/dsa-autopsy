@@ -541,4 +541,3 @@ def test_analyzer_key_value_invariants() -> None:
         or "set(d_ind.keys()) == set(range(len(size)))" in expressions
     )
     assert "all(d_freq[k] == arr.count(k) for k in d_freq)" in expressions
-
