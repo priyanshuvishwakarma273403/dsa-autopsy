@@ -293,8 +293,7 @@ class SandboxExecutor(BaseExecutor):
             instantiation = ""
             if is_void:
                 call = (
-                    f"{func_name}({args_str});\n"
-                    f'    std::cout << "RETURN_VALUE: void" << std::endl;'
+                    f'{func_name}({args_str});\n    std::cout << "RETURN_VALUE: void" << std::endl;'
                 )
             else:
                 call = (
@@ -536,8 +535,7 @@ with open(r"{output_file}", "w") as f:
         is_void = re.search(r"\bvoid\s+" + re.escape(func_name), code.content) is not None
         if is_void:
             call = (
-                f"solver.{func_name}({args_str});\n"
-                f'        System.out.print("RETURN_VALUE: void");'
+                f'solver.{func_name}({args_str});\n        System.out.print("RETURN_VALUE: void");'
             )
         else:
             call = (
