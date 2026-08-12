@@ -70,11 +70,40 @@ class TraceAnalyzer(BaseAnalyzer):
             except Exception:
                 return False
 
-        def eval_candidate(rel: tuple[str, str, Any], locals_dict: dict[str, Any]) -> int:
+        def eval_candidate(rel: tuple[Any, ...], locals_dict: dict[str, Any]) -> int:
             # Returns:
             #  1: Holds (True)
             #  0: Violated (False)
             # -1: Not Applicable (missing variables or type errors/exceptions)
+            if len(rel) == 5:
+                left, op, right, op2, right2 = rel
+                if left not in locals_dict:
+                    return -1
+                left_val = locals_dict[left]
+
+                if isinstance(right, str) and right in locals_dict:
+                    right_val = locals_dict[right]
+                else:
+                    right_val = right
+
+                if isinstance(right2, str) and right2 in locals_dict:
+                    right2_val = locals_dict[right2]
+                else:
+                    right2_val = right2
+
+                try:
+                    if op == "%":
+                        temp_val = left_val % right_val
+                        if op2 == "==":
+                            return 1 if temp_val == right2_val else 0
+                        if op2 == "!=":
+                            return 1 if temp_val != right2_val else 0
+                except (TypeError, ValueError, ZeroDivisionError, AttributeError):
+                    return -1
+                except Exception:
+                    return -1
+                return -1
+
             left, op, right = rel
             if left not in locals_dict:
                 return -1
@@ -112,6 +141,21 @@ class TraceAnalyzer(BaseAnalyzer):
                     return 1 if left_val == right_val else 0
                 if op == "!=":
                     return 1 if left_val != right_val else 0
+                if op == "in":
+                    return 1 if left_val in right_val else 0
+                if op == "issubset":
+                    return 1 if set(left_val).issubset(set(right_val)) else 0
+                if op == "keys_match_indices":
+                    if isinstance(right_val, int):
+                        return 1 if set(left_val.keys()) == set(range(right_val)) else 0
+                    else:
+                        return 1 if set(left_val.keys()) == set(range(len(right_val))) else 0
+                if op == "values_are_frequencies":
+                    def get_count(coll: Any, item: Any) -> int:
+                        if hasattr(coll, "count"):
+                            return int(coll.count(item))
+                        return 1 if item in coll else 0
+                    return 1 if all(left_val[k] == get_count(right_val, k) for k in left_val) else 0
             except (TypeError, ValueError, AttributeError):
                 return -1
             except Exception:
@@ -119,7 +163,7 @@ class TraceAnalyzer(BaseAnalyzer):
             return -1
 
         # 4. Generate and filter invariants that hold across all passing runs
-        invariants_by_line: dict[int, list[tuple[str, str, Any]]] = {}
+        invariants_by_line: dict[int, list[tuple[Any, ...]]] = {}
 
         for line_num, frames in passing_frames_by_line.items():
             if len(frames) < self.min_observations:
@@ -134,13 +178,16 @@ class TraceAnalyzer(BaseAnalyzer):
             common_vars = {v for v in common_vars if not v.startswith("__") and v != "return_value"}
 
             sorted_vars = sorted(common_vars)
-            candidates: list[tuple[str, str, Any]] = []
+            candidates: list[tuple[Any, ...]] = []
 
             for var in sorted_vars:
                 val = frames[0][var]
                 if isinstance(val, (int, float)):
                     candidates.append((var, ">", 0))
                     candidates.append((var, ">=", 0))
+
+                if isinstance(val, int):
+                    candidates.append((var, "%", 2, "==", 0))
 
                 if isinstance(val, (list, tuple, str)):
                     candidates.append((var, "is_sorted", "is_sorted"))
@@ -173,6 +220,26 @@ class TraceAnalyzer(BaseAnalyzer):
                         candidates.append((var, "==", f"len({other})"))
                         candidates.append((var, "!=", f"len({other})"))
 
+                    # Mathematical alignment (variable multiples)
+                    if isinstance(val, int) and isinstance(other_val, int):
+                        candidates.append((var, "%", other, "==", 0))
+
+                    # Set Containment
+                    if isinstance(val, (list, tuple, set, dict)) and isinstance(other_val, (int, float, str)):
+                        candidates.append((other, "in", var))
+
+                    # Sublist & Subset relations
+                    if isinstance(val, (list, tuple, set, dict)) and isinstance(other_val, (list, tuple, set, dict)):
+                        candidates.append((other, "issubset", var))
+
+                    # Key-Value Invariants
+                    if isinstance(val, dict):
+                        if isinstance(other_val, (list, tuple, set)):
+                            candidates.append((var, "keys_match_indices", other))
+                            candidates.append((var, "values_are_frequencies", other))
+                        elif isinstance(other_val, int):
+                            candidates.append((var, "keys_match_indices", other))
+
             # Limit the total number of candidates evaluated per line
             if len(candidates) > self.max_candidates:
                 candidates = candidates[: self.max_candidates]
@@ -184,10 +251,14 @@ class TraceAnalyzer(BaseAnalyzer):
 
             # Group valid invariants by (left, right) to prune implied/redundant relationships
             grouped: dict[tuple[str, Any], set[str]] = {}
-            for left, op, right in valid_invariants:
-                grouped.setdefault((left, right), set()).add(op)
+            pruned_invariants: list[tuple[Any, ...]] = []
+            for cand in valid_invariants:
+                if len(cand) == 3:
+                    left, op, right = cand
+                    grouped.setdefault((left, right), set()).add(op)
+                else:
+                    pruned_invariants.append(cand)
 
-            pruned_invariants: list[tuple[str, str, Any]] = []
             for (left, right), ops in grouped.items():
                 if "<" in ops:
                     ops.discard("<=")
@@ -218,6 +289,11 @@ class TraceAnalyzer(BaseAnalyzer):
             "==": "eq",
             "!=": "neq",
             "is_sorted": "is_sorted",
+            "in": "in",
+            "issubset": "issubset",
+            "keys_match_indices": "keys_match_indices",
+            "values_are_frequencies": "values_are_frequencies",
+            "%": "mod",
         }
 
         for res in failing_results:
@@ -229,15 +305,42 @@ class TraceAnalyzer(BaseAnalyzer):
                 locals_dict = frame.local_variables
                 for cand in invariants_by_line[line_num]:
                     if eval_candidate(cand, locals_dict) == 0:
-                        left, op, right = cand
-                        expr = f"is_sorted({left})" if op == "is_sorted" else f"{left} {op} {right}"
+                        if len(cand) == 5:
+                            left, op, right, op2, right2 = cand
+                            expr = f"{left} {op} {right} {op2} {right2}"
 
-                        # Derive a stable ID from the expression and line number
-                        clean_op = op_map.get(op, op)
-                        clean_right = str(right).replace("(", "_").replace(")", "_")
-                        clean_left = "".join(c for c in left if c.isalnum() or c == "_")
-                        clean_right = "".join(c for c in clean_right if c.isalnum() or c == "_")
-                        expr_part = f"{clean_left}_{clean_op}_{clean_right}"
+                            clean_op = f"{op_map.get(op, op)}_{op_map.get(op2, op2)}"
+                            clean_right = f"{right}_{right2}"
+                            clean_left = "".join(c for c in left if c.isalnum() or c == "_")
+                            clean_right = "".join(c for c in clean_right if c.isalnum() or c == "_")
+                            expr_part = f"{clean_left}_{clean_op}_{clean_right}"
+                        else:
+                            left, op, right = cand
+                            if op == "is_sorted":
+                                expr = f"is_sorted({left})"
+                            elif op == "issubset":
+                                expr = f"set({left}).issubset(set({right}))"
+                            elif op == "keys_match_indices":
+                                is_int = False
+                                if isinstance(right, int):
+                                    is_int = True
+                                elif isinstance(right, str) and right in locals_dict and isinstance(locals_dict[right], int):
+                                    is_int = True
+                                if is_int:
+                                    expr = f"set({left}.keys()) == set(range({right}))"
+                                else:
+                                    expr = f"set({left}.keys()) == set(range(len({right})))"
+                            elif op == "values_are_frequencies":
+                                expr = f"all({left}[k] == {right}.count(k) for k in {left})"
+                            else:
+                                expr = f"{left} {op} {right}"
+
+                            clean_op = op_map.get(op, op)
+                            clean_right = str(right).replace("(", "_").replace(")", "_")
+                            clean_left = "".join(c for c in left if c.isalnum() or c == "_")
+                            clean_right = "".join(c for c in clean_right if c.isalnum() or c == "_")
+                            expr_part = f"{clean_left}_{clean_op}_{clean_right}"
+
                         while "__" in expr_part:
                             expr_part = expr_part.replace("__", "_")
                         expr_part = expr_part.strip("_")
@@ -273,6 +376,10 @@ class TraceAnalyzer(BaseAnalyzer):
                             if seq_name in locals_dict:
                                 context_vars[seq_name] = locals_dict[seq_name]
                                 context_vars[f"len({seq_name})"] = len(locals_dict[seq_name])
+
+                        if len(cand) == 5:
+                            if isinstance(right2, str) and right2 in locals_dict:
+                                context_vars[right2] = locals_dict[right2]
 
                         violation = Violation(
                             invariant=inv,
