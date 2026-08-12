@@ -201,3 +201,124 @@ def test_sandbox_executor_memory_limit() -> None:
     result = executor.execute(code, test_case)
     assert result.exit_code != 0
     assert result.error_message is not None
+
+
+def test_sandbox_executor_cpp_success(monkeypatch) -> None:
+    """Test successful C++ execution with mocked compilation and GDB tracing."""
+    import json
+    import subprocess
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    mock_run = MagicMock()
+    call_count = 0
+
+    def side_effect_fn(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        cmd = args[0]
+        if "gdb" in cmd:
+            out_file = Path(cmd[4]).parent / "output.json"
+            out_file.write_text(
+                json.dumps(
+                    {
+                        "trace_frames": [
+                            {
+                                "line_number": 2,
+                                "local_variables": {"c": 8},
+                                "instruction": "add_numbers",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return MagicMock(returncode=0, stdout="RETURN_VALUE: 8", stderr="")
+
+    mock_run.side_effect = side_effect_fn
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    executor = SandboxExecutor()
+    code = SourceCode(
+        content=("int add_numbers(int a, int b) {\n    int c = a + b;\n    return c;\n}\n"),
+        language="cpp",
+    )
+    test_case = SolutionTestCase(
+        id="test-cpp-success",
+        inputs={"a": 3, "b": 5},
+        expected_output=8,
+    )
+    result = executor.execute(code, test_case)
+
+    assert result.exit_code == 0
+    assert result.error_message is None
+    assert len(result.trace_frames) == 1
+    assert result.trace_frames[0].local_variables.get("c") == 8
+    assert result.trace_frames[0].local_variables.get("return_value") == 8
+
+
+def test_sandbox_executor_java_success(monkeypatch) -> None:
+    """Test successful Java execution with mocked compilation and JDI tracing."""
+    import json
+    import subprocess
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    mock_run = MagicMock()
+    call_count = 0
+
+    def side_effect_fn(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        cwd = kwargs.get("cwd")
+        if cwd:
+            out_file = Path(cwd) / "output.json"
+            out_file.write_text(
+                json.dumps(
+                    {
+                        "trace_frames": [
+                            {
+                                "line_number": 4,
+                                "local_variables": {"c": 8},
+                                "instruction": "add_numbers",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return MagicMock(returncode=0, stdout="RETURN_VALUE: 8", stderr="")
+
+    mock_run.side_effect = side_effect_fn
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    executor = SandboxExecutor()
+    code = SourceCode(
+        content=(
+            "public class Solution {\n"
+            "    public int add_numbers(int a, int b) {\n"
+            "        int c = a + b;\n"
+            "        return c;\n"
+            "    }\n"
+            "}\n"
+        ),
+        language="java",
+    )
+    test_case = SolutionTestCase(
+        id="test-java-success",
+        inputs={"a": 3, "b": 5},
+        expected_output=8,
+    )
+    result = executor.execute(code, test_case)
+
+    assert result.exit_code == 0
+    assert result.error_message is None
+    assert len(result.trace_frames) == 1
+    assert result.trace_frames[0].local_variables.get("c") == 8
+    assert result.trace_frames[0].local_variables.get("return_value") == 8

@@ -24,6 +24,50 @@ class ASTParser(BaseParser):
         Raises:
             ParsingError: If the source code language is not Python or contains syntax errors.
         """
+        if code.language.lower() in ["cpp", "c++"]:
+            import re
+
+            metadata: dict[str, Any] = {}
+            pattern = re.compile(r"(?:\w+::)?(\w+)\s+(\w+)\s*\(([^)]*)\)\s*\{")
+            for match in pattern.finditer(code.content):
+                _, name, args_str = match.groups()
+                if name not in ("if", "for", "while", "switch", "catch"):
+                    args = [
+                        arg.strip().split()[-1].replace("*", "").replace("&", "")
+                        for arg in args_str.split(",")
+                        if arg.strip()
+                    ]
+                    metadata[name] = {
+                        "name": name,
+                        "start_line": code.content[: match.start()].count("\n") + 1,
+                        "end_line": code.content[: match.end()].count("\n") + 1,
+                        "arguments": args,
+                        "loops": [],
+                        "returns": [],
+                    }
+            return metadata
+
+        if code.language.lower() == "java":
+            import re
+
+            metadata: dict[str, Any] = {}
+            pattern = re.compile(
+                r"(?:public|private|protected|static|\s)+\s+(\w+)\s+(\w+)\s*\(([^)]*)\)\s*(?:throws\s+[\w\s,]+)?\s*\{"
+            )
+            for match in pattern.finditer(code.content):
+                _, name, args_str = match.groups()
+                if name not in ("if", "for", "while", "switch", "catch", "Solution", "Main"):
+                    args = [arg.strip().split()[-1] for arg in args_str.split(",") if arg.strip()]
+                    metadata[name] = {
+                        "name": name,
+                        "start_line": code.content[: match.start()].count("\n") + 1,
+                        "end_line": code.content[: match.end()].count("\n") + 1,
+                        "arguments": args,
+                        "loops": [],
+                        "returns": [],
+                    }
+            return metadata
+
         if code.language.lower() not in ["python", "py"]:
             raise ParsingError(f"Unsupported language: '{code.language}'")
 
