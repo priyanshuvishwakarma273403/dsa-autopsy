@@ -9,9 +9,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from dsa_autopsy.config.settings import settings
 from dsa_autopsy.interfaces.executor import BaseExecutor
+from dsa_autopsy.interfaces.sandbox_driver import BaseSandboxDriver
 from dsa_autopsy.models.domain import ExecutionResult, SolutionTestCase, SourceCode, TraceFrame
 from dsa_autopsy.services.ast_parser import ASTParser
+from dsa_autopsy.services.sandbox_driver import DockerSandboxDriver, SubprocessSandboxDriver
 
 
 def _extract_exception_name(stderr_text: str) -> str | None:
@@ -105,10 +108,21 @@ def _parse_return_value(stdout: str) -> Any:
 class SandboxExecutor(BaseExecutor):
     """Executes Python source code in a restricted subprocess sandbox with trace collection."""
 
-    def __init__(self, timeout_secs: float = 5.0, max_steps: int = 10000) -> None:
+    def __init__(
+        self,
+        timeout_secs: float = 5.0,
+        max_steps: int = 10000,
+        driver: BaseSandboxDriver | None = None,
+    ) -> None:
         """Initialize the executor with timeout and instruction step limit constraints."""
         self.timeout_secs = timeout_secs
         self.max_steps = max_steps
+        if driver is not None:
+            self.driver = driver
+        elif getattr(settings, "SANDBOX_MODE", "SubprocessSandbox") == "ContainerizedSandbox":
+            self.driver = DockerSandboxDriver()
+        else:
+            self.driver = SubprocessSandboxDriver()
 
     def execute(self, code: SourceCode, test_case: SolutionTestCase) -> ExecutionResult:
         """Run the solution inside a sandboxed process with trace capturing."""
@@ -152,7 +166,7 @@ class SandboxExecutor(BaseExecutor):
 
             try:
                 # Launch subprocess
-                process = subprocess.run(
+                process = self.driver.run(
                     [
                         sys.executable,
                         str(runner_file),
@@ -160,8 +174,7 @@ class SandboxExecutor(BaseExecutor):
                         str(inputs_file),
                         str(output_file),
                     ],
-                    capture_output=True,
-                    text=True,
+                    temp_dir=temp_dir_path,
                     timeout=self.timeout_secs,
                 )
                 end_time = time.perf_counter()
@@ -345,10 +358,9 @@ int main() {{
             wrapper_file.write_text(wrapper_content, encoding="utf-8")
 
             # Compile code using GCC/G++ with debug symbols
-            compile_proc = subprocess.run(
+            compile_proc = self.driver.run(
                 ["g++", "-g", "-O0", str(wrapper_file), "-o", str(executable)],
-                capture_output=True,
-                text=True,
+                temp_dir=temp_dir_path,
                 timeout=30.0,
             )
 
@@ -433,10 +445,9 @@ with open(r"{output_file}", "w") as f:
             # Run GDB
             start_time = time.perf_counter()
             try:
-                proc = subprocess.run(
+                proc = self.driver.run(
                     ["gdb", "-batch", "-q", "-x", str(trace_script), "--args", str(executable)],
-                    capture_output=True,
-                    text=True,
+                    temp_dir=temp_dir_path,
                     timeout=self.timeout_secs,
                 )
                 end_time = time.perf_counter()
@@ -478,10 +489,9 @@ with open(r"{output_file}", "w") as f:
                 )
             except Exception:
                 start_time = time.perf_counter()
-                proc = subprocess.run(
+                proc = self.driver.run(
                     [str(executable)],
-                    capture_output=True,
-                    text=True,
+                    temp_dir=temp_dir_path,
                     timeout=self.timeout_secs,
                 )
                 elapsed = time.perf_counter() - start_time
@@ -752,12 +762,11 @@ public class JdiTracer {
             inputs_file.write_text("", encoding="utf-8")
 
             # Compile files
-            compile_proc = subprocess.run(
+            compile_proc = self.driver.run(
                 ["javac", "-g", str(code_file), str(runner_file), str(tracer_file)],
-                capture_output=True,
-                text=True,
-                cwd=temp_dir,
+                temp_dir=temp_dir_path,
                 timeout=30.0,
+                cwd=temp_dir_path,
             )
 
             if compile_proc.returncode != 0:
@@ -775,7 +784,7 @@ public class JdiTracer {
             # Run JDI Tracer
             start_time = time.perf_counter()
             try:
-                proc = subprocess.run(
+                proc = self.driver.run(
                     [
                         "java",
                         "-cp",
@@ -787,10 +796,9 @@ public class JdiTracer {
                         "output.json",
                         "SolutionRunner",
                     ],
-                    capture_output=True,
-                    text=True,
-                    cwd=temp_dir,
+                    temp_dir=temp_dir_path,
                     timeout=self.timeout_secs,
+                    cwd=temp_dir_path,
                 )
                 end_time = time.perf_counter()
                 elapsed = end_time - start_time
@@ -831,12 +839,11 @@ public class JdiTracer {
                 )
             except Exception:
                 start_time = time.perf_counter()
-                proc = subprocess.run(
+                proc = self.driver.run(
                     ["java", "-cp", ".", "SolutionRunner"],
-                    capture_output=True,
-                    text=True,
-                    cwd=temp_dir,
+                    temp_dir=temp_dir_path,
                     timeout=self.timeout_secs,
+                    cwd=temp_dir_path,
                 )
                 elapsed = time.perf_counter() - start_time
                 actual_output = _parse_return_value(proc.stdout)

@@ -1,13 +1,41 @@
 """Central configuration management using Pydantic Settings."""
 
+import tomllib
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def load_sandbox_mode_from_toml() -> Literal["SubprocessSandbox", "ContainerizedSandbox"]:
+    """Load sandbox mode from pyproject.toml if specified."""
+    try:
+        pyproject_path = Path("pyproject.toml")
+        if pyproject_path.exists():
+            with pyproject_path.open("rb") as f:
+                data = tomllib.load(f)
+            val = data.get("tool", {}).get("dsa_autopsy", {}).get("sandbox_mode")
+            if val == "ContainerizedSandbox":
+                return "ContainerizedSandbox"
+    except Exception:
+        pass
+    return "SubprocessSandbox"
+
+
 class Settings(BaseSettings):
     """Application settings, loaded from environment variables and optionally a .env file."""
+
+    # Sandbox configuration settings
+    SANDBOX_MODE: Literal["SubprocessSandbox", "ContainerizedSandbox"] = Field(
+        default_factory=load_sandbox_mode_from_toml,
+        description="The sandbox execution mode: SubprocessSandbox or ContainerizedSandbox.",
+    )
+
+    DOCKER_IMAGE: str = Field(
+        default="python:3.12-slim",
+        description="Docker image to use for the containerized sandbox.",
+    )
 
     # Application Environment
     ENV: Literal["development", "testing", "production"] = Field(
