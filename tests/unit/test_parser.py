@@ -113,8 +113,8 @@ def test_ast_parser_unsupported_language() -> None:
     """Test that parsing an unsupported language raises ParsingError."""
     parser = ASTParser()
     code = SourceCode(
-        content="public class Main {}",
-        language="java",
+        content="package main",
+        language="go",
     )
     with pytest.raises(ParsingError) as exc_info:
         parser.parse(code)

@@ -55,6 +55,7 @@ class ExecutionResult:
     stderr: str
     exit_code: int
     execution_time_seconds: float
+    matches_expected: bool
     trace_frames: list[TraceFrame] = field(default_factory=list)
     error_message: str | None = None
 

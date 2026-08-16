@@ -102,3 +102,6 @@ markers = [
     "integration: Tests verifying interaction between multiple components.",
     "e2e: End-to-end tests validating the full system flow.",
 ]
+
+[tool.dsa_autopsy]
+sandbox_mode = "SubprocessSandbox"

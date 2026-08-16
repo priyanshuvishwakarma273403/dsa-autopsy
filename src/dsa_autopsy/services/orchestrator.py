@@ -1,5 +1,6 @@
 """Service layer orchestrating the algorithm debugging (autopsy) workflow."""
 
+import dataclasses
 import logging
 import uuid
 
@@ -78,7 +79,6 @@ class AutopsyOrchestrator:
             logger.info(f"Executing test case {test_case.id} for report {report_id}")
             try:
                 result = self._executor.execute(code, test_case)
-                execution_results.append(result)
 
                 # Determine failure: either execution engine returned an exit code/error
                 # or output does not match expected output.
@@ -89,6 +89,8 @@ class AutopsyOrchestrator:
                 )
 
                 is_failed = not result.is_success or actual_output != test_case.expected_output
+                result = dataclasses.replace(result, matches_expected=not is_failed)
+                execution_results.append(result)
 
                 if is_failed:
                     logger.warning(
